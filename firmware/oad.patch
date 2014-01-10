@@ -1,0 +1,135 @@
+diff -u old/oad.h new/oad.h
+--- old/oad.h	2012-12-06 13:16:36.000000000 +0800
++++ new/oad.h	2014-01-10 16:12:47.273288536 +0800
+@@ -58,6 +58,7 @@
+ #define OAD_SERVICE_UUID      0xFFC0
+ #define OAD_IMG_IDENTIFY_UUID 0xFFC1
+ #define OAD_IMG_BLOCK_UUID    0xFFC2
++#define OAD_IMG_ERASE_UUID    0xFFC3
+ 
+ #define OAD_IMG_CRC_OSET      0x0000
+ #if defined FEATURE_OAD_SECURE
+@@ -66,12 +67,13 @@
+ #define OAD_IMG_HDR_OSET      0x0002
+ #endif
+ 
+-#define OAD_CHAR_CNT          2
++#define OAD_CHAR_CNT          3
+ 
+ // OAD Characteristic Indices
+ #define OAD_CHAR_IMG_IDENTIFY 0
+ #define OAD_CHAR_IMG_BLOCK    1
+-
++#define OAD_CHAR_IMG_ERASE    2
++  
+ // Image Identification size
+ #define OAD_IMG_ID_SIZE       4
+ 
+diff -u old/oad_target.c new/oad_target.c
+--- old/oad_target.c	2013-08-23 07:35:30.000000000 +0800
++++ new/oad_target.c	2014-01-10 16:12:47.293288536 +0800
+@@ -103,7 +103,10 @@
+  TI_BASE_UUID_128( OAD_IMG_IDENTIFY_UUID ),
+ 
+  // OAD Image Block Request/Response UUID
+- TI_BASE_UUID_128( OAD_IMG_BLOCK_UUID )
++ TI_BASE_UUID_128( OAD_IMG_BLOCK_UUID ),
++
++ // OAD Image Erase Request UUID
++ TI_BASE_UUID_128( OAD_IMG_ERASE_UUID )
+ };
+ 
+ /*********************************************************************
+@@ -126,6 +129,7 @@
+ // OAD Characteristic user descriptions
+ static CONST uint8 oadImgIdentifyDesc[] = "Img Identify";
+ static CONST uint8 oadImgBlockDesc[] = "Img Block";
++static CONST uint8 oadImgEraseDesc[] = "Img Erase";
+ 
+ /*********************************************************************
+  * Profile Attributes - Table
+@@ -203,7 +207,31 @@
+         GATT_PERMIT_READ,
+         0,
+         (uint8 *)oadImgBlockDesc
+-      }
++      },
++
++    // OAD Image Invalidate Characteristic Declaration
++    {
++      { ATT_BT_UUID_SIZE, characterUUID },
++      GATT_PERMIT_READ,
++      0,
++      &oadCharProps
++    },
++
++      // OAD Image Erase Request/Response Characteristic Value
++      {
++        { ATT_UUID_SIZE, oadCharUUID[2] },
++        GATT_PERMIT_WRITE,
++        0,
++        oadCharVals+2
++      },
++
++      // OAD Image Erase Request/Response User Description
++      {
++        { ATT_BT_UUID_SIZE, charUserDescUUID },
++        GATT_PERMIT_READ,
++        0,
++        (uint8 *)oadImgEraseDesc
++      }      
+ };
+ 
+ #pragma location="IMAGE_HEADER"
+@@ -267,6 +295,8 @@
+ 
+ static bStatus_t oadImgBlockWrite( uint16 connHandle, uint8 *pValue );
+ 
++static bStatus_t oadImgEraseWrite( uint16 connHandle, uint8 *pValue );
++
+ static void oadHandleConnStatusCB( uint16 connHandle, uint8 changeType );
+ 
+ #if !defined FEATURE_OAD_SECURE
+@@ -363,6 +393,10 @@
+     {
+       status = oadImgBlockWrite( connHandle, pValue );
+     }
++    else if (osal_memcmp(pAttr->type.uuid, oadCharUUID[OAD_CHAR_IMG_ERASE], ATT_UUID_SIZE))
++    {
++      status = oadImgEraseWrite( connHandle, pValue );
++    }    
+     else
+     {
+       status = ATT_ERR_ATTR_NOT_FOUND; // Should never get here!
+@@ -496,6 +530,31 @@
+   }
+ 
+   return ( SUCCESS );
++}
++
++/*********************************************************************
++ * @fn      oadImgEraseWrite
++ *
++ * @brief   Process the Image Erase Write.
++ *
++ * @param   connHandle - connection message was received on
++ * @param   pValue - pointer to data to be written
++ *
++ * @return  status
++ */
++static bStatus_t oadImgEraseWrite( uint16 connHandle, uint8 *pValue )
++{
++  uint16 value = BUILD_UINT16( pValue[0], pValue[1] );
++
++  if (value == 0xEEEE)  // Write the Erase characteristic with 0xEEEE to invalidate IMG_B.
++  {
++    uint16 crc[2] = { 0x0000, 0xFFFF };
++    uint16 addr = OAD_IMG_B_PAGE * OAD_FLASH_PAGE_MULT + OAD_IMG_CRC_OSET / HAL_FLASH_WORD_SIZE;
++    HalFlashWrite(addr, (uint8 *)crc, 1);
++    HAL_SYSTEM_RESET();
++  }
++
++  return ( SUCCESS );
+ }
+ 
+ /*********************************************************************
